@@ -1,0 +1,2 @@
+# brinxai
+AUTO INSTALLER BRINXAI NODE
