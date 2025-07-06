@@ -55,6 +55,7 @@ fi
 
 sudo ufw allow 22/tcp
 sudo ufw allow 5011/tcp
+sudo ufw allow 1194/udp
 
 UFW_STATUS=$(sudo ufw status | grep -i "Status: active")
 if [ -z "$UFW_STATUS" ]; then
@@ -67,56 +68,69 @@ fi
 echo -e "${CYAN}📋 Aturan firewall saat ini:${NC}"
 sudo ufw status verbose
 
-# ===== Unduh & Jalankan Installer BrinxAI =====
-echo -e "${GREEN}▶ Mengunduh dan menjalankan installer BrinxAI Node...${NC}"
+# ===== Unduh & Jalankan Installer Worker Node =====
+echo -e "${GREEN}▶ Menyiapkan Worker Node...${NC}"
 sleep 2
 
 INSTALLER_URL="https://raw.githubusercontent.com/admier1/BrinxAI-Worker-Nodes/refs/heads/main/install_brinxai_worker_amd64_deb.sh"
 INSTALLER_NAME="install_brinxai_worker_amd64_deb.sh"
 
-rm -f $INSTALLER_NAME
-wget "$INSTALLER_URL" -O $INSTALLER_NAME
-
-if [ -f "$INSTALLER_NAME" ]; then
+if [ ! -f "$INSTALLER_NAME" ]; then
+  wget "$INSTALLER_URL" -O $INSTALLER_NAME
   chmod +x $INSTALLER_NAME
-  ./"$INSTALLER_NAME"
-else
-  echo -e "${RED}❌ Gagal mengunduh installer dari $INSTALLER_URL${NC}"
-  exit 1
 fi
+./"$INSTALLER_NAME"
 
 # ===== Menu Multi Pilihan Model =====
-echo -e "${GREEN}▶ Pilih model BrinxAI yang ingin dijalankan (pisahkan dengan spasi, contoh: 1 3):${NC}"
+echo -e "${GREEN}▶ Pilih model BrinxAI yang ingin dijalankan (pisahkan dengan spasi, contoh: 1 3 5):${NC}"
 echo -e "${CYAN}1.${NC} Text UI           (CPU: 4 | RAM: 4GB | Port: 5000)"
 echo -e "${CYAN}2.${NC} Rembg             (CPU: 2 | RAM: 2GB | Port: 7000)"
 echo -e "${CYAN}3.${NC} Upscaler          (CPU: 2 | RAM: 2GB | Port: 3000)"
 echo -e "${CYAN}4.${NC} Stable Diffusion  (CPU: 8 | RAM: 8GB | Port: 5050)"
-read -p "Masukkan pilihan Anda (contoh: 1 3): " -a model_choices
+echo -e "${CYAN}5.${NC} Relay Node        (CPU: 1 | RAM: 256MB | Port: 1194 UDP)"
+read -p "Masukkan pilihan Anda (contoh: 1 3 5): " -a model_choices
 
 docker network create brinxai-network &>/dev/null || true
 
-run_model() {
+run_model_safe() {
   NAME=$1
   CPU=$2
   MEM=$3
   PORT=$4
   IMAGE=$5
-  echo -e "${CYAN}▶ Menjalankan $NAME...${NC}"
-  docker rm -f $NAME &>/dev/null || true
-  docker run -d --name $NAME --restart=unless-stopped \
-    --network brinxai-network --cpus=$CPU --memory=${MEM}m \
-    -p 127.0.0.1:$PORT:$PORT $IMAGE
+
+  if docker ps -a --format '{{.Names}}' | grep -q "^$NAME$"; then
+    echo -e "${YELLOW}⚠️  Container '$NAME' sudah ada. Lewatkan...${NC}"
+  else
+    echo -e "${CYAN}▶ Menjalankan $NAME...${NC}"
+    docker run -d --name $NAME --restart=unless-stopped \
+      --network brinxai-network --cpus=$CPU --memory=${MEM}m \
+      -p 127.0.0.1:$PORT:$PORT $IMAGE
+  fi
 }
 
 for choice in "${model_choices[@]}"; do
   case "$choice" in
-    1) run_model "text-ui" 4 4096 5000 "admier/brinxai_nodes-text-ui:latest" ;;
-    2) run_model "rembg" 2 2048 7000 "admier/brinxai_nodes-rembg:latest" ;;
-    3) run_model "upscaler" 2 2048 3000 "admier/brinxai_nodes-upscaler:latest" ;;
-    4) run_model "stable-diffusion" 8 8192 5050 "admier/brinxai_nodes-stabled:latest" ;;
+    1) run_model_safe "text-ui" 4 4096 5000 "admier/brinxai_nodes-text-ui:latest" ;;
+    2) run_model_safe "rembg" 2 2048 7000 "admier/brinxai_nodes-rembg:latest" ;;
+    3) run_model_safe "upscaler" 2 2048 3000 "admier/brinxai_nodes-upscaler:latest" ;;
+    4) run_model_safe "stable-diffusion" 8 8192 5050 "admier/brinxai_nodes-stabled:latest" ;;
+    5)
+      echo -e "${CYAN}▶ Menyiapkan Relay Node...${NC}"
+      sudo ufw allow 1194/udp
+
+      INSTALLER_URL_RELAY="https://raw.githubusercontent.com/admier1/BrinxAI-Relay-Nodes/refs/heads/main/install_brinxai_relay_amd64_deb.sh"
+      INSTALLER_NAME_RELAY="install_brinxai_relay_amd64_deb.sh"
+
+      if [ ! -f "$INSTALLER_NAME_RELAY" ]; then
+        wget "$INSTALLER_URL_RELAY" -O $INSTALLER_NAME_RELAY
+        chmod +x $INSTALLER_NAME_RELAY
+      fi
+      ./"$INSTALLER_NAME_RELAY"
+      ;;
     *) echo -e "${RED}❌ Pilihan tidak valid: $choice${NC}" ;;
   esac
 done
 
-echo -e "${GREEN}✅ Semua model yang dipilih telah dijalankan.${NC}"
+echo -e "${GREEN}✅ Semua model yang dipilih telah dijalankan.${NC} ${CYAN}docker ps -a untuk melihat kontainer.${NC}"
 echo -e "${YELLOW}Gunakan perintah berikut untuk melihat log:${NC} ${CYAN}docker logs -f <nama_kontainer>${NC}"
